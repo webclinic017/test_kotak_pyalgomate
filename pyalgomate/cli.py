@@ -1,0 +1,421 @@
+
+import click
+import zmq
+import json
+import logging
+import datetime
+import pyalgomate.utils as utils
+import inspect
+
+# from pyalgomate.telegram import TelegramBot
+
+# ZeroMQ Context
+context = zmq.Context()
+
+# Define the socket using the "Context"
+sock = context.socket(zmq.PUB)
+
+
+def createStrategyInstance(strategyClass, argsDict):
+    # Get the parameters of the strategy class
+    parameters = inspect.signature(strategyClass).parameters
+
+    # Prepare the arguments for the constructor
+    constructorArgs = {}
+    for paramName, param in parameters.items():
+        if paramName in argsDict:
+            # Use the provided value if available
+            constructorArgs[paramName] = argsDict[paramName]
+        elif param.default != inspect.Parameter.empty:
+            # Use the default value if available
+            constructorArgs[paramName] = param.default
+        else:
+            # Parameter is required but not provided, raise an exception or handle the case as needed
+            raise ValueError(
+                f"Missing value for required parameter: {paramName}")
+
+    # Create an instance of the strategy class with the prepared arguments
+    return strategyClass(**constructorArgs)
+
+
+def valueChangedCallback(strategy, value):
+    jsonDump = json.dumps({strategy: value})
+    sock.send_json(jsonDump)
+
+
+@click.group()
+@click.pass_context
+def cli(ctx):
+    global strategyClass
+    ctx.obj = strategyClass
+
+
+def checkDate(ctx, param, value):
+    try:
+        if value is None:
+            return value
+
+        _ = datetime.datetime.strptime(value, "%Y-%m-%d")
+        return value
+    except ValueError:
+        raise click.UsageError("Not a valid date: '{0}'.".format(value))
+
+
+@cli.command(name='backtest')
+@click.option('--underlying', default=['BANKNIFTY'], multiple=True, help='Specify an underlying')
+@click.option('--data', prompt='Specify data file', multiple=True)
+@click.option('--port', help='Specify a zeroMQ port to send data to', default=5680, type=click.INT)
+@click.option('--send-to-ui', help='Specify if data needs to be sent to UI', default=False, type=click.BOOL)
+@click.option('--send-to-telegram', help='Specify if messages needs to be sent to telegram', default=False, type=click.BOOL)
+@click.option('--from-date', help='Specify a from date', callback=checkDate,  default=None, type=click.STRING)
+@click.option('--to-date', help='Specify a to date', callback=checkDate, default=None, type=click.STRING)
+@click.pass_obj
+def runBacktest(strategyClass, underlying, data, port, send_to_ui, send_to_telegram, from_date, to_date):
+    import yaml
+
+    if len(underlying) == 0:
+        underlying = ['BANKNIFTY']
+
+    underlyings = list(underlying)
+
+    if send_to_ui:
+        sock.bind(f"tcp://127.0.0.1:{port}")
+
+    from pyalgomate.backtesting import CustomCSVFeed
+    from pyalgomate.brokers import BacktestingBroker
+
+    underlyings = list(underlying)
+
+    start = datetime.datetime.now()
+    feed = CustomCSVFeed.CustomCSVFeed()
+
+    for underlying in underlyings:
+        feed.addBarsFromParquets(
+            dataFiles=data,
+            ticker=underlying,
+            startDate=datetime.datetime.strptime(
+                from_date, "%Y-%m-%d").date() if from_date is not None else None,
+            endDate=datetime.datetime.strptime(to_date, "%Y-%m-%d").date() if to_date is not None else None)
+
+    print("")
+    print(f"Time took in loading data <{datetime.datetime.now()-start}>")
+    start = datetime.datetime.now()
+
+    broker = BacktestingBroker(200000, feed)
+
+    if send_to_telegram:
+        with open('cred.yml') as f:
+            creds = yaml.load(f, Loader=yaml.FullLoader)
+            telegramBot = TelegramBot(
+                creds['Telegram']['token'], creds['Telegram']['chatid'])
+    else:
+        telegramBot = None
+
+    constructorArgs = inspect.signature(strategyClass.__init__).parameters
+    argNames = [param for param in constructorArgs]
+    click.echo(f"{strategyClass.__name__} takes {argNames}")
+
+    argsDict = {
+        'feed': feed,
+        'broker': broker,
+        'underlying': underlyings[0],
+        'underlyings': underlyings,
+        'lotSize': 25,
+        'callback': valueChangedCallback if send_to_ui else None,
+        'telegramBot': telegramBot
+    }
+
+    strategy = createStrategyInstance(strategyClass, argsDict)
+    strategy.run()
+
+    print("")
+    print(
+        f"Time took in running the strategy <{datetime.datetime.now()-start}>")
+
+    if telegramBot:
+        telegramBot.stop()  # Signal the stop event
+        telegramBot.waitUntilFinished()
+        telegramBot.delete()  # Delete the TelegramBot instance
+
+
+@cli.command(name='trade')
+@click.option('--broker', prompt='Select a broker', type=click.Choice(['Finvasia', 'Zerodha']), help='Select a broker')
+@click.option('--mode', prompt='Select a trading mode', type=click.Choice(['paper', 'live']), help='Select a trading mode')
+@click.option('--underlying', multiple=True, help='Specify an underlying')
+@click.option('--collect-data', help='Specify if the data needs to be collected to data.csv', default=False, type=click.BOOL)
+@click.option('--port', help='Specify a zeroMQ port to send data to', default=5680, type=click.INT)
+@click.option('--send-to-ui', help='Specify if data needs to be sent to UI', default=False, type=click.BOOL)
+@click.option('--send-to-telegram', help='Specify if messages needs to be sent to telegram', default=False, type=click.BOOL)
+@click.option('--register-options', help='Specify which expiry options to register. Allowed values are Weekly, NextWeekly, Monthly', default=["Weekly"], type=click.STRING, multiple=True)
+@click.pass_obj
+def runLiveTrade(strategyClass, broker, mode, underlying, collect_data, port, send_to_ui, send_to_telegram, register_options):
+    if not broker:
+        raise click.UsageError('Please select a broker')
+
+    if not mode:
+        raise click.UsageError('Please select a mode')
+
+    if send_to_ui:
+        sock.bind(f"tcp://127.0.0.1:{port}")
+
+    import yaml
+    import pyotp
+    import datetime
+    import os
+
+    click.echo(f'broker <{broker}> mode <{mode}> underlying <{underlying}> collect-data <{collect_data}> port <{port}> send-to-ui <{send_to_ui}> send-to-telegram <{send_to_telegram}> register-options <{register_options}>')
+
+    underlyings = list(underlying)
+
+    with open('cred.yml') as f:
+        creds = yaml.load(f, Loader=yaml.FullLoader)
+
+    if broker == 'Finvasia':
+        from NorenRestApiPy.NorenApi import NorenApi as ShoonyaApi
+        from pyalgomate.brokers.finvasia.broker import PaperTradingBroker, LiveBroker, getFinvasiaToken, getFinvasiaTokenMappings
+        import pyalgomate.brokers.finvasia as finvasia
+        from pyalgomate.brokers.finvasia.feed import LiveTradeFeed
+
+        cred = creds[broker]
+
+        api = ShoonyaApi(host='https://api.shoonya.com/NorenWClientTP/',
+                         websocket='wss://api.shoonya.com/NorenWSTP/')
+        userToken = None
+        tokenFile = 'shoonyakey.txt'
+        if os.path.exists(tokenFile) and (datetime.datetime.fromtimestamp(os.path.getmtime(tokenFile)).date() == datetime.datetime.today().date()):
+            click.echo(f"Token has been created today already. Re-using it")
+            with open(tokenFile, 'r') as f:
+                userToken = f.read()
+            click.echo(
+                f"userid {cred['user']} password ******** usertoken {userToken}")
+            loginStatus = api.set_session(
+                userid=cred['user'], password=cred['pwd'], usertoken=userToken)
+        else:
+            click.echo(f"Logging in and persisting user token")
+            loginStatus = api.login(userid=cred['user'], password=cred['pwd'], twoFA=pyotp.TOTP(cred['factor2']).now(),
+                                    vendor_code=cred['vc'], api_secret=cred['apikey'], imei=cred['imei'])
+
+            if loginStatus:
+                with open(tokenFile, 'w') as f:
+                    f.write(loginStatus.get('susertoken'))
+
+                click.echo(
+                    f"{loginStatus.get('uname')}={loginStatus.get('stat')} token={loginStatus.get('susertoken')}")
+            else:
+                click.echo(f'Login failed!')
+
+        if loginStatus != None:
+            currentWeeklyExpiry = utils.getNearestWeeklyExpiryDate(
+                datetime.datetime.now().date())
+            nextWeekExpiry = utils.getNextWeeklyExpiryDate(
+                datetime.datetime.now().date())
+            monthlyExpiry = utils.getNearestMonthlyExpiryDate(
+                datetime.datetime.now().date())
+
+            if len(underlyings) == 0:
+                underlyings = ['NSE|NIFTY BANK']
+
+            optionSymbols = []
+
+            for underlying in underlyings:
+                ltp = api.get_quotes('NSE', getFinvasiaToken(
+                    api, underlying))['lp']
+
+                if "Weekly" in register_options:
+                    optionSymbols += finvasia.broker.getOptionSymbols(
+                        underlying, currentWeeklyExpiry, ltp, 10)
+                if "NextWeekly" in register_options:
+                    optionSymbols += finvasia.broker.getOptionSymbols(
+                        underlying, nextWeekExpiry, ltp, 10)
+                if "Monthly" in register_options:
+                    optionSymbols += finvasia.broker.getOptionSymbols(
+                        underlying, monthlyExpiry, ltp, 10)
+
+            optionSymbols = list(dict.fromkeys(optionSymbols))
+
+            tokenMappings = getFinvasiaTokenMappings(
+                api, underlyings + optionSymbols)
+
+            barFeed = LiveTradeFeed(api, tokenMappings)
+
+            if mode == 'paper':
+                broker = PaperTradingBroker(200000, barFeed)
+            else:
+                broker = LiveBroker(api)
+        else:
+            exit(1)
+    elif broker == 'Zerodha':
+        from pyalgomate.brokers.zerodha.kiteext import KiteExt
+        import pyalgomate.brokers.zerodha as zerodha
+        from pyalgomate.brokers.zerodha.broker import getZerodhaTokensList
+        from pyalgomate.brokers.zerodha.feed import ZerodhaLiveFeed
+        from pyalgomate.brokers.zerodha.broker import ZerodhaPaperTradingBroker, ZerodhaLiveBroker
+
+        cred = creds[broker]
+
+        api = KiteExt()
+        twoFA = pyotp.TOTP(cred['factor2']).now()
+        api.login_with_credentials(
+            userid=cred['user'], password=cred['pwd'], twofa=twoFA)
+
+        profile = api.profile()
+        print(f"Welcome {profile.get('user_name')}")
+
+        currentWeeklyExpiry = utils.getNearestWeeklyExpiryDate(
+            datetime.datetime.now().date())
+        nextWeekExpiry = utils.getNextWeeklyExpiryDate(
+            datetime.datetime.now().date())
+        monthlyExpiry = utils.getNearestMonthlyExpiryDate(
+            datetime.datetime.now().date())
+
+        if len(underlyings) == 0:
+            underlyings = ['NSE:NIFTY BANK']
+
+        optionSymbols = []
+
+        for underlying in underlyings:
+            ltp = api.quote(underlying)[
+                underlying]["last_price"]
+
+            if "Weekly" in register_options:
+                optionSymbols += zerodha.broker.getOptionSymbols(
+                    underlying, currentWeeklyExpiry, ltp, 10)
+            if "NextWeekly" in register_options:
+                optionSymbols += zerodha.broker.getOptionSymbols(
+                    underlying, nextWeekExpiry, ltp, 10)
+            if "Monthly" in register_options:
+                optionSymbols += zerodha.broker.getOptionSymbols(
+                    underlying, monthlyExpiry, ltp, 10)
+
+        optionSymbols = list(dict.fromkeys(optionSymbols))
+
+        tokenMappings = getZerodhaTokensList(
+            api, underlyings + optionSymbols)
+
+        barFeed = ZerodhaLiveFeed(api, tokenMappings)
+
+        if mode == 'paper':
+            broker = ZerodhaPaperTradingBroker(200000, barFeed)
+        else:
+            broker = ZerodhaLiveBroker(api)
+    elif broker == 'kotak':
+        from neo_api_client import NeoAPI
+        from pyalgomate.brokers.kotak.broker import PaperTradingBroker, LiveBroker, getFinvasiaToken, getFinvasiaTokenMappings
+        import pyalgomate.brokers.kotak as kotak
+        from pyalgomate.brokers.kotak.feed import LiveTradeFeed
+
+        cred = creds[broker]
+
+        api = NeoAPI(consumer_key=cred['consumer_key'],
+                     consumer_secret=cred['consumer_secret'], environment=cred['environment'])
+        userToken = None
+        tokenFile = 'kotakkey.txt'
+        if os.path.exists(tokenFile) and (datetime.datetime.fromtimestamp(os.path.getmtime(tokenFile)).date() == datetime.datetime.today().date()):
+            click.echo(f"Token has been created today already. Re-using it")
+            with open(tokenFile, 'r') as f:
+                userToken = f.read()
+            click.echo(
+                f"userid {cred['consumer_key']} password ******** usertoken {userToken}")
+            loginStatus = api.login(
+                mobilenumber=cred['mobilenumber'], password=cred['Password'])
+            loginStatus = api.session_2fa(cred['mpin'])
+        else:
+            click.echo(f"Logging in and persisting user token")
+            loginStatus = api.login(userid=cred['user'], password=cred['pwd'], twoFA=pyotp.TOTP(cred['factor2']).now(),
+                                    vendor_code=cred['vc'], api_secret=cred['apikey'], imei=cred['imei'])
+
+            if loginStatus:
+                with open(tokenFile, 'w') as f:
+                    f.write(loginStatus.get('susertoken'))
+
+                click.echo(
+                    f"{loginStatus.get('uname')}={loginStatus.get('stat')} token={loginStatus.get('susertoken')}")
+            else:
+                click.echo(f'Login failed!')
+
+        if loginStatus != None:
+            currentWeeklyExpiry = utils.getNearestWeeklyExpiryDate(
+                datetime.datetime.now().date())
+            nextWeekExpiry = utils.getNextWeeklyExpiryDate(
+                datetime.datetime.now().date())
+            monthlyExpiry = utils.getNearestMonthlyExpiryDate(
+                datetime.datetime.now().date())
+
+            if len(underlyings) == 0:
+                underlyings = ['NSE|NIFTY BANK']
+
+            optionSymbols = []
+
+            for underlying in underlyings:
+                ltp = api.get_quotes('NSE', getFinvasiaToken(
+                    api, underlying))['lp']
+
+                if "Weekly" in register_options:
+                    optionSymbols += finvasia.broker.getOptionSymbols(
+                        underlying, currentWeeklyExpiry, ltp, 10)
+                if "NextWeekly" in register_options:
+                    optionSymbols += finvasia.broker.getOptionSymbols(
+                        underlying, nextWeekExpiry, ltp, 10)
+                if "Monthly" in register_options:
+                    optionSymbols += finvasia.broker.getOptionSymbols(
+                        underlying, monthlyExpiry, ltp, 10)
+
+            optionSymbols = list(dict.fromkeys(optionSymbols))
+
+            tokenMappings = getFinvasiaTokenMappings(
+                api, underlyings + optionSymbols)
+
+            barFeed = LiveTradeFeed(api, tokenMappings)
+
+            if mode == 'paper':
+                broker = PaperTradingBroker(200000, barFeed)
+            else:
+                broker = LiveBroker(api)
+        else:
+            exit(1)
+    if send_to_telegram:
+        telegramBot = TelegramBot(
+            creds['Telegram']['token'], creds['Telegram']['chatid'])
+    else:
+        telegramBot = None
+
+    constructorArgs = inspect.signature(strategyClass.__init__).parameters
+    argNames = [param for param in constructorArgs]
+    click.echo(f"{strategyClass.__name__} takes {argNames}")
+
+    argsDict = {
+        'feed': barFeed,
+        'broker': broker,
+        'underlying': underlyings[0],
+        'underlyings': underlyings,
+        'registeredOptionsCount': len(optionSymbols),
+        'lotSize': 25,
+        'callback': valueChangedCallback if send_to_ui else None,
+        'collectData': collect_data,
+        'telegramBot': telegramBot
+    }
+
+    strategy = createStrategyInstance(strategyClass, argsDict)
+    strategy.run()
+
+    if telegramBot:
+        telegramBot.stop()  # Signal the stop event
+        telegramBot.waitUntilFinished()
+        telegramBot.delete()  # Delete the TelegramBot instance
+
+
+def CliMain(cls):
+    # Remove all handlers associated with the root logger object.
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    logging.basicConfig(filename=f'{cls.__name__}.log', level=logging.INFO)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+
+    try:
+        global strategyClass
+        strategyClass = cls
+        cli(standalone_mode=False)
+    except click.UsageError as e:
+        click.echo(f'Error: {str(e)}')
+        click.echo(cli.get_help())
