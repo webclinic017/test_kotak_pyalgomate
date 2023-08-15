@@ -331,7 +331,7 @@ class TradeEvent(object):
         return float(self.__eventDict.get('fldQty', 0.0))
 
     def getDateTime(self):
-        return datetime.datetime.strptime(self.__eventDict['flDtTm'], '%d-%m-%Y %H:%M:%S') if self.__eventDict.get('flDtTm', None) is not None else None
+        return datetime.datetime.strptime(self.__eventDict['flDtTm'], '%d-%b-%Y %H:%M:%S') if self.__eventDict.get('flDtTm', None) is not None else None
 
 # def getOrderStatus(orderId):
 #     orderBook = api.get_order_book()
@@ -372,31 +372,40 @@ class TradeMonitor(threading.Thread):
 
     def _getNewTrades(self):
         ret = []
-        a = self.__api.order_report()
-        activeOrderIds = [i['nOrdNo'] for i in a['data']]
+        # a = self.__api.order_report()
+        # activeOrderIds = [i['nOrdNo'] for i in a['data']]
+        activeOrderIds = [order.getId()
+                          for order in self.__broker.getActiveOrders().copy()]
         for orderId in activeOrderIds:
             orderHistories = self.__api.order_history(
-                orderno=orderId)
+                order_id=orderId)
             if orderHistories is None:
                 logger.info(
                     f'Order history not found for order id {orderId}')
                 continue
 
-            for orderHistory in orderHistories:
-                if orderHistory['data']['stat'] == 'Not_Ok':
-                    errorMsg = orderHistory['rejRsn']
-                    logger.error(
-                        f'Fetching order history for {orderId} failed with with reason {errorMsg}')
-                    continue
+            if 'data' not in orderHistories:
+                continue
+
+            if 'data' not in orderHistories['data']:
+                continue
+
+            for orderHistory in orderHistories['data']['data']:
+                status = status_mapping.get(
+                    orderHistory['ordSt'], orderHistory['ordSt'])
+                # if orderHistory['stat'] == 'Not_Ok':
+                #     errorMsg = orderHistory['rejRsn']
+                #     logger.error(
+                #         f'Fetching order history for {orderId} failed with with reason {errorMsg}')
+                #     continue
                 # ["rejected", "cancelled", "complete", "traded"]
-                elif orderHistory['ordSt'] in ['OPEN', 'PENDING', 'TRIGGER_PENDING']:
+                if status in ['put order req received', 'validation pending', 'open pending', 'OPEN', 'PENDING', 'TRIGGER_PENDING']:
                     continue
                 # ["rejected", "cancelled", "complete", "traded"]
 
                 # Your existing code
                 elif orderHistory['ordSt'] in ["rejected", "cancelled", "complete", "traded"]:
-                    orderHistory['ordSt'] = status_mapping.get(
-                        orderHistory['ordSt'], orderHistory['ordSt'])
+                    orderHistory['ordSt'] = status
                     ret.append(TradeEvent(orderHistory))  # event
                 else:
                     logger.error(
@@ -445,7 +454,7 @@ class OrderResponse(object):
         return self.__dict["nOrdNo"]
 
     def getDateTime(self):
-        return datetime.now().strftime("%H:%M:%S %d-%m-%Y")
+        return datetime.datetime.now()
 
     def getStat(self):
         return self.__dict.get("stat", None)
@@ -551,22 +560,6 @@ class LiveBroker(broker.Broker):
 
     def refreshAccountBalance(self):
         self.__stop = True  # Stop running in case of errors.
-
-        balance = self.__api.limits(
-            segment="ALL", exchange="ALL", product="ALL")['Net']
-        logger.info(f"Retrieving account balance {balance}")
-        # Cash
-        # self.__cash = round(balance.getUSDAvailable(), 2)
-        # logger.info("%s USD" % (self.__cash))
-        # # BTC
-        # btc = balance.getBTCAvailable()
-        # if btc:
-        #     self.__shares = {common.btc_symbol: btc}
-        # else:
-        #     self.__shares = {}
-        # logger.info("%s BTC" % (btc))
-
-        self.__stop = False  # No errors. Keep running.
 
     def refreshOpenOrders(self):
         return
@@ -721,10 +714,10 @@ class LiveBroker(broker.Broker):
 
     def __placeOrder(self, buyOrSell, productType, exchange, symbol, quantity, price, priceType, triggerPrice, retention, remarks):
         try:
-            orderResponse = self.__api.place_order(exchange_segment=exchange, product=productType, price=price, order_type=priceType,
-                                                   quantity=quantity, validity=retention, trading_symbol=symbol,
+            orderResponse = self.__api.place_order(exchange_segment=exchange, product=productType, price=str(price), order_type=priceType,
+                                                   quantity=str(quantity), validity=retention, trading_symbol=symbol,
                                                    transaction_type=buyOrSell, amo="NO", disclosed_quantity="0", market_protection="0", pf="N",
-                                                   trigger_price=triggerPrice, tag=None)
+                                                   trigger_price=str(triggerPrice), tag=None)
             # orderResponse = self.__api.place_order(buy_or_sell=buyOrSell, product_type=productType,
             #                                        exchange=exchange, tradingsymbol=symbol,
             #                                        quantity=quantity, discloseqty=0, price_type=priceType,
@@ -738,7 +731,7 @@ class LiveBroker(broker.Broker):
 
         ret = OrderResponse(orderResponse)
 
-        if ret['stat'] != "Ok":
+        if orderResponse['stat'] != "Ok":
             raise Exception(ret.getErrorMessage())
 
         return ret
@@ -786,10 +779,16 @@ class LiveBroker(broker.Broker):
                     f'Could not place order for {symbol}. Reason: {e}')
                 return
 
-            logger.info(
-                f'Placed {priceType} {"Buy" if order.isBuy() else "Sell"} order {kotakOrder.getId()} at {kotakOrder.getDateTime()}')
-            order.setSubmitted(kotakOrder.getId(),
-                               kotakOrder.getDateTime())
+            try:
+                logger.info(
+                    f'Placed {priceType} {"Buy" if order.isBuy() else "Sell"} order {kotakOrder.getId()} at {kotakOrder.getDateTime()}')
+                order.setSubmitted(kotakOrder.getId(),
+                                   kotakOrder.getDateTime())
+            except Exception as e:
+                logger.critical(
+                    f'Could not place order for {symbol}. Reason: {e}')
+                return
+
             self._registerOrder(order)
             # Switch from INITIAL -> SUBMITTED
             # IMPORTANT: Do not emit an event for this switch because when using the position interface

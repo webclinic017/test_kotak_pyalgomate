@@ -168,9 +168,9 @@ class IntradayData(BaseStrategy):
             self.state = State.PLACING_ORDERS
             logger.info('Initiating trade')
             price = self.getFeed().getDataSeries(
-                'NSE|YESBANK-EQ')[-1].getClose()
+                'BANKNIFTY2381744100CE')[-1].getClose()
             strategy.enterLongLimit(
-                'NSE|YESBANK-EQ', price, 50)
+                'BANKNIFTY2381744100CE', price, 50)
         elif self.state == State.PLACING_ORDERS:
             if len(self.getActivePositions()):
                 self.state = State.LIVE
@@ -193,7 +193,7 @@ def main():
         # tokenMappings = getTokenMappings(
         #     api, ['BANKNIFTY2381744100CE'])
         tokenMappings = [
-            {'instrument_token': '39015', 'exchange_segment': 'nse_fo'}]
+            {'instrument_token': '39015', 'exchange_segment': 'nse_fo', 'instrument': 'BANKNIFTY2391433500CE'}]
         # Remove NFO| and replace index names
         # for key, value in tokenMappings.items():
         #     tokenMappings[key] = value.replace('NFO|', '').replace('NSE|NIFTY BANK', 'BANKNIFTY').replace(
@@ -201,6 +201,7 @@ def main():
 
         feed = LiveTradeFeed(api, tokenMappings)
         broker = LiveBroker(api)
+        #broker = PaperTradingBroker(100000, feed)
         intradayData = IntradayData(feed, broker)
         print(tokenMappings)
 

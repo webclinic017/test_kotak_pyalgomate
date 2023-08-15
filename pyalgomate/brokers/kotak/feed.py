@@ -78,7 +78,6 @@ class TradeBar(bar.Bar):
     def isSell(self):
         return not self.__trade.isBuy()
 
-
 class MyBarFeed(feed.BaseFeed):
     """Base class for :class:`pyalgotrade.bar.Bar` providing feeds.
 
@@ -107,8 +106,7 @@ class MyBarFeed(feed.BaseFeed):
 
     def setUseAdjustedValues(self, useAdjusted):
         if useAdjusted and not self.barsHaveAdjClose():
-            raise Exception(
-                "The barfeed doesn't support adjusted close values")
+            raise Exception("The barfeed doesn't support adjusted close values")
         # This is to affect future dataseries when they get created.
         self.__useAdjustedValues = useAdjusted
         # Update existing dataseries
@@ -202,7 +200,6 @@ class MyBarFeed(feed.BaseFeed):
     def getDispatchPriority(self):
         return dispatchprio.BAR_FEED
 
-
 class LiveTradeFeed(MyBarFeed):
 
     """A real-time BarFeed that builds bars from live trades.
@@ -227,9 +224,9 @@ class LiveTradeFeed(MyBarFeed):
         self.__channels = tokenMappings
         self.__api = api
         self.__timeout = timeout
-        # Assuming you want the first dictionary's instrument token
-        instrument_token = tokenMappings[0]['instrument_token']
-        self.registerDataSeries(instrument_token)
+        
+        for tokenMapping in tokenMappings:
+            self.registerDataSeries(tokenMapping['instrument'])
 
         self.__thread = None
         self.__enableReconnection = True

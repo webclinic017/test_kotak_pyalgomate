@@ -15,29 +15,6 @@ logger.propagate = False
 
 
 class SubscribeEvent(object):
-    # t	tk	‘tk’ represents touchline acknowledgement
-    # e	NSE, BSE, NFO ..	Exchange name
-    # tk	22	Scrip Token
-    # pp	2 for NSE, BSE & 4 for CDS USDINR	Price precision
-    # ts		Trading Symbol
-    # ti		Tick size
-    # ls		Lot size
-    # lp		LTP
-    # pc		Percentage change
-    # v		volume
-    # o		Open price
-    # h		High price
-    # l		Low price
-    # c		Close price
-    # ap		Average trade price
-    # oi		Open interest
-    # poi		Previous day closing Open Interest
-    # toi		Total open interest for underlying
-    # bq1		Best Buy Quantity 1
-    # bp1		Best Buy Price 1
-    # sq1		Best Sell Quantity 1
-    # sp1		Best Sell Price 1
-
     def __init__(self, eventDict):
         self.__eventDict = eventDict
         self.__datetime = None
@@ -63,8 +40,6 @@ class SubscribeEvent(object):
                     ftdm_str, '%d/%m/%Y %H:%M:%S')
             else:
                 self.__datetime = datetime.datetime.now()
-
-        return self.__datetime
 
         return self.__datetime
 
@@ -128,8 +103,9 @@ class WebSocketClient:
         assert len(tokenMappings), "Missing subscriptions"
         self.__queue = queue
         self.__api = api
-        self.__tokenMappings = tokenMappings
-        self.__pending_subscriptions = list(tokenMappings)
+        self.__tokenMappings = [{'instrument_token': tokenMapping['instrument_token'], 'exchange_segment': tokenMapping['exchange_segment']} for tokenMapping in tokenMappings]
+        self.__pending_subscriptions = [
+            tokenMapping['instrument_token'] for tokenMapping in tokenMappings]
         self.__connected = False
         self.__initialized = threading.Event()
         self.__currentDateTime = None
@@ -139,12 +115,7 @@ class WebSocketClient:
         self.__api.on_error = self.onError
         self.__api.on_close = self.onClosed
         self.__api.on_open = self.onOpened
-        self.__api.subscribe(self.__pending_subscriptions)
-        # start_websocket(order_update_callback=self.onOrderBookUpdate,
-        #                            subscribe_callback=self.onQuoteUpdate,
-        #                            socket_open_callback=self.onOpened,
-        #                            socket_close_callback=self.onClosed,
-        #                            socket_error_callback=self.onError)
+        self.__api.subscribe(self.__tokenMappings)
 
     def stopClient(self):
         try:
@@ -167,10 +138,6 @@ class WebSocketClient:
 
     def onOpened(self):
         self.__connected = True
-
-        # for channel in self.__pending_subscriptions:
-        #     logger.info("Subscribing to channel %s." % channel)
-        #     self.__api.subscribe(channel)
 
     def onClosed(self):
         if self.__connected:
@@ -195,40 +162,21 @@ class WebSocketClient:
             self.__queue.put((WebSocketClient.Event.TRADE, trade))
 
     def onQuoteUpdate(self, message):
-        logger.debug(message)
-# check
-        field = message[0].get("tk")
-        # message[0]["ts"] = self.__tokenMappings[f"{message[0]['tk']}"]
-        # t='tk' is sent once on subscription for each instrument.
-        # this will have all the fields with the most recent value thereon t='tf' is sent for fields that have changed.
-        subscribeEvent = SubscribeEvent(message[0])
+        try:
+            if not self.__connected:
+                self.__connected = True
 
-        # if field not in ["ts", "tk"]:
-        #     self.onUnknownEvent(subscribeEvent)
-        #     return
+            logger.debug(message)
 
-        if field == "tk":
-            logger.info(f"success with {field}")
-            self.__onSubscriptionSucceeded(subscribeEvent)
-            # return
+            subscribeEvent = SubscribeEvent(message[0])
 
-        # if subscribeEvent.openInterest  > 0:
-        #     print(f'{subscribeEvent.instrument} OI <{subscribeEvent.openInterest}>')
+            if subscribeEvent.scriptToken in self.__pending_subscriptions:
+                self.__onSubscriptionSucceeded(subscribeEvent)
 
-        # dateTime = subscribeEvent.dateTime
-        # instrument = subscribeEvent.instrument
-        # if self.__currentDateTime is not None and dateTime <= self.__currentDateTime:
-        #     logger.debug(f"Current date time <{self.__currentDateTime}> for <{instrument}> is higher/equal than tick date time <{dateTime}>. Modifying tick time!")
-        #     subscribeEvent.dateTime = datetime.datetime.now().replace(microsecond=0)
-        # self.__currentDateTime = subscribeEvent.dateTime
-        subscribeEvent.dateTime = datetime.datetime.now()
-        self.onTrade(subscribeEvent.TradeBar())
-
-    def onOrderBookUpdate(self, message):
-        hello = True
-        # orderBookUpdate = message
-        # self.__queue.put(
-        #     (WebSocketClient.Event.ORDER_BOOK_UPDATE, orderBookUpdate))
+            subscribeEvent.dateTime = datetime.datetime.now()
+            self.onTrade(subscribeEvent.TradeBar())
+        except Exception as e:
+            logger.exception("Unhandled exception %s" % e)
 
     def __onSubscriptionSucceeded(self, event):
         logger.info(
