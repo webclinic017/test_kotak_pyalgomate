@@ -19,29 +19,15 @@ from pyalgomate.backtesting import CustomCSVFeed
 from pyalgomate.brokers.kotak.broker import BacktestingBroker
 from pyalgomate.brokers.kotak.feed import LiveTradeFeed
 from pyalgomate.brokers.kotak.broker import PaperTradingBroker, LiveBroker
+# from pyalgomate.strategies import BaseOptionsGreeksStrategy
 import pyalgomate.brokers.kotak as kotak
 from neo_api_client import NeoAPI
 
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__file__)
-logger.propagate = False
 
-
-def getToken(api, exchangeSymbol):
-    splitStrings = exchangeSymbol.split('|')
-    exchange = splitStrings[0]
-    symbol = splitStrings[1]
-    ret = api.searchscrip(exchange=exchange, searchtext=symbol)
-
-    if ret != None:
-        for value in ret['values']:
-            if value['instname'] in ['OPTIDX', 'EQ'] and value['tsym'] == symbol:
-                return value['token']
-            if value['instname'] == 'UNDIND' and value['cname'] == symbol:
-                return value['token']
-
-    return None
+x = ['BANKNIFTY2382443800CE']
 
 
 def getTokenMappings(api, exchangeSymbols):
@@ -106,14 +92,15 @@ def getTokenMappings(api, exchangeSymbols):
     instrument_tokens = output_array
     # Delete the downloaded file
     os.remove(filename)
-    inst_tokens = [{"instrument_token": "26037", "exchange_segment": "nse_cm"}]
+    inst_tokens = [
+        {"instrument_token": "257349", "exchange_segment": "mcx_fo"}]
     # Function to populate inst_tokens list
 
     def populate_inst_tokens(instrument_tokens, inst_tokens):
         inst_tokens.clear()  # Clear the initial entry
         for token in instrument_tokens:
             inst_tokens.append(
-                {"instrument_token": token, "exchange_segment": "nse_fo"})
+                {"instrument_token": token, "exchange_segment": "mcx_fo"})
 
     # Call the function to populate inst_tokens
     populate_inst_tokens(instrument_tokens, inst_tokens)
@@ -134,6 +121,8 @@ class IntradayData(BaseStrategy):
             5 * pyalgotrade.bar.Frequency.MINUTE, self.onResampledBars)
         self.state = State.LIVE
         self.openPositions = {}
+        self.Position = None
+        self.orderTime = None
 
     def onEnterOk(self, position):
         execInfo = position.getEntryOrder().getExecutionInfo()
@@ -163,14 +152,25 @@ class IntradayData(BaseStrategy):
                 if position.getEntryOrder().isFilled():
                     position.exitMarket()
 
+    def haveLTP(self, instrument):
+        return instrument in self.getFeed().getKeys() and len(self.getFeed().getDataSeries(instrument)) > 0
+
     def onBars(self, bars):
+        logger.info(bars.getDateTime())
+        if self.Position != None and bars.getDateTime() > datetime.timedelta(seconds=10):
+            self.state = State.PLACING_ORDERS
+            self.Position.exitMarket()
+            self.orderTime = None
+
         if self.state == State.LIVE and len(self.getActivePositions()) == 0:
             self.state = State.PLACING_ORDERS
             logger.info('Initiating trade')
-            price = self.getFeed().getDataSeries(
-                'BANKNIFTY2381744100CE')[-1].getClose()
-            strategy.enterLongLimit(
-                'BANKNIFTY2381744100CE', price, 50)
+            for i in x:
+                if self.haveLTP(i) != False:
+                    price = self.getFeed().getDataSeries(i)[-1].getClose()
+                    self.Position = strategy.enterLong(i, 15)
+                    self.orderTime = bars.getDateTime()
+
         elif self.state == State.PLACING_ORDERS:
             if len(self.getActivePositions()):
                 self.state = State.LIVE
@@ -193,7 +193,9 @@ def main():
         # tokenMappings = getTokenMappings(
         #     api, ['BANKNIFTY2381744100CE'])
         tokenMappings = [
-            {'instrument_token': '39015', 'exchange_segment': 'nse_fo', 'instrument': 'BANKNIFTY2391433500CE'}]
+            {'instrument_token': '50812', 'exchange_segment': 'nse_fo',
+                'instrument': 'BANKNIFTY2382443800CE'}]
+
         # Remove NFO| and replace index names
         # for key, value in tokenMappings.items():
         #     tokenMappings[key] = value.replace('NFO|', '').replace('NSE|NIFTY BANK', 'BANKNIFTY').replace(
@@ -201,7 +203,7 @@ def main():
 
         feed = LiveTradeFeed(api, tokenMappings)
         broker = LiveBroker(api)
-        #broker = PaperTradingBroker(100000, feed)
+        # broker = PaperTradingBroker(100000, feed)
         intradayData = IntradayData(feed, broker)
         print(tokenMappings)
 

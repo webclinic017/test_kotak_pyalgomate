@@ -28,7 +28,11 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"
+            }
         },
         {
             "name": "Python: Current File with Args - Backtest",
@@ -36,10 +40,22 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false,            
+            "justMyCode": false,
             "cwd": "${workspaceFolder}",
-            "env": {"PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"},
-            "args": ["backtest", "--data", "${workspaceFolder}/strategies/data/2023/banknifty/01.parquet", "--underlying", "BANKNIFTY", "--from-date", "2023-01-01", "--to-date", "2023-01-03"]
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"
+            },
+            "args": [
+                "backtest",
+                "--data",
+                "${workspaceFolder}/strategies/data/2023/banknifty/01.parquet",
+                "--underlying",
+                "BANKNIFTY",
+                "--from-date",
+                "2023-01-01",
+                "--to-date",
+                "2023-01-03"
+            ]
         },
         {
             "name": "Python: Current File with Args - Finvasia Paper Trade",
@@ -47,10 +63,24 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false,            
+            "justMyCode": false,
             "cwd": "${workspaceFolder}",
-            "env": {"PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"},
-            "args": ["trade", "--broker", "Finvasia", "--mode", "paper", "--underlying", "NSE|NIFTY BANK", "--send-to-telegram", "True", "--send-to-ui", "True"]
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"
+            },
+            "args": [
+                "trade",
+                "--broker",
+                "Finvasia",
+                "--mode",
+                "paper",
+                "--underlying",
+                "NSE|NIFTY BANK",
+                "--send-to-telegram",
+                "True",
+                "--send-to-ui",
+                "True"
+            ]
         },
         {
             "name": "Python: Current File with Args - Finvasia Live Trade",
@@ -58,10 +88,24 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false,            
+            "justMyCode": false,
             "cwd": "${workspaceFolder}",
-            "env": {"PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"},
-            "args": ["trade", "--broker", "Finvasia", "--mode", "live", "--underlying", "NSE|NIFTY BANK", "--send-to-telegram", "True", "--send-to-ui", "True"]
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"
+            },
+            "args": [
+                "trade",
+                "--broker",
+                "Finvasia",
+                "--mode",
+                "live",
+                "--underlying",
+                "NSE|NIFTY BANK",
+                "--send-to-telegram",
+                "True",
+                "--send-to-ui",
+                "True"
+            ]
         },
         {
             "name": "Python: Current File with Args - Zerodha Paper Trade",
@@ -69,10 +113,24 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false,            
+            "justMyCode": false,
             "cwd": "${workspaceFolder}",
-            "env": {"PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"},
-            "args": ["trade", "--broker", "Zerodha", "--mode", "paper", "--underlying", "NSE:NIFTY BANK", "--send-to-telegram", "True", "--send-to-ui", "True"]
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}${pathSeparator}${env:PYTHONPATH}"
+            },
+            "args": [
+                "trade",
+                "--broker",
+                "Zerodha",
+                "--mode",
+                "paper",
+                "--underlying",
+                "NSE:NIFTY BANK",
+                "--send-to-telegram",
+                "True",
+                "--send-to-ui",
+                "True"
+            ]
         }
     ]
 }

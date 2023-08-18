@@ -731,7 +731,7 @@ class LiveBroker(broker.Broker):
 
         ret = OrderResponse(orderResponse)
 
-        if orderResponse['stat'] != "Ok":
+        if 'stat' not in orderResponse or orderResponse['stat'] != "Ok":
             raise Exception(ret.getErrorMessage())
 
         return ret
@@ -744,8 +744,8 @@ class LiveBroker(broker.Broker):
 
             buyOrSell = 'B' if order.isBuy() else 'S'
             # "C" For CNC, "M" FOR NRML, "I" FOR MIS, "B" FOR BRACKET ORDER, "H" FOR COVER ORDER
-            productType = 'MIS'
-            exchange = 'NFO'
+            productType = 'NRML'
+            exchange = 'nse_fo'
             symbol = order.getInstrument()
             quantity = order.getQuantity()
             price = order.getLimitPrice() if order.getType() in [

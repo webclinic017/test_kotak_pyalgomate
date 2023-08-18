@@ -27,9 +27,9 @@ class SubscribeEvent(object):
     def scriptToken(self):
         return self.__eventDict["tk"]
 
-    @property
-    def tradingSymbol(self):
-        return self.__eventDict["ts"]
+    # @property
+    # def tradingSymbol(self):
+    #     return self.__eventDict["ts"]
 
     @property
     def dateTime(self):
@@ -67,10 +67,10 @@ class SubscribeEvent(object):
     @property
     def seq(self): return int(self.dateTime())
 
-    @property
-    def instrument(self): return f"{self.tradingSymbol}"
+    # @property
+    # def instrument(self): return f"{self.tradingSymbol}"
 
-    def TradeBar(self):
+    def TradeBar(self, instrument):
         open = high = low = close = self.price
 
         return bar.BasicBar(self.dateTime,
@@ -82,7 +82,7 @@ class SubscribeEvent(object):
                             None,
                             bar.Frequency.TRADE,
                             {
-                                "Instrument": self.instrument,
+                                "Instrument": instrument,
                                 "Open Interest": self.openInterest,
                                 "Date/Time": self.tickDateTime
                             })
@@ -103,7 +103,9 @@ class WebSocketClient:
         assert len(tokenMappings), "Missing subscriptions"
         self.__queue = queue
         self.__api = api
-        self.__tokenMappings = [{'instrument_token': tokenMapping['instrument_token'], 'exchange_segment': tokenMapping['exchange_segment']} for tokenMapping in tokenMappings]
+        self.__tokenMappingsOriginal = tokenMappings
+        self.__tokenMappings = [{'instrument_token': tokenMapping['instrument_token'],
+                                 'exchange_segment': tokenMapping['exchange_segment']} for tokenMapping in tokenMappings]
         self.__pending_subscriptions = [
             tokenMapping['instrument_token'] for tokenMapping in tokenMappings]
         self.__connected = False
@@ -161,26 +163,25 @@ class WebSocketClient:
         if trade.getPrice() > 0:
             self.__queue.put((WebSocketClient.Event.TRADE, trade))
 
-    def onQuoteUpdate(self, message):
+    def onQuoteUpdate(self, messages):
         try:
             if not self.__connected:
                 self.__connected = True
 
-            logger.debug(message)
+            logger.debug(messages)
+            for message in messages:
+                subscribeEvent = SubscribeEvent(message)
+                if subscribeEvent.scriptToken in self.__pending_subscriptions:
+                    self.__onSubscriptionSucceeded(subscribeEvent)
 
-            subscribeEvent = SubscribeEvent(message[0])
-
-            if subscribeEvent.scriptToken in self.__pending_subscriptions:
-                self.__onSubscriptionSucceeded(subscribeEvent)
-
-            subscribeEvent.dateTime = datetime.datetime.now()
-            self.onTrade(subscribeEvent.TradeBar())
+                subscribeEvent.dateTime = datetime.datetime.now()
+                self.onTrade(subscribeEvent.TradeBar('BANKNIFTY2382443800CE'))
         except Exception as e:
             logger.exception("Unhandled exception %s" % e)
 
     def __onSubscriptionSucceeded(self, event):
         logger.info(
-            f"Subscription succeeded for <{event.tradingSymbol}>")
+            f"Subscription succeeded for <{event.scriptToken}>")
 
         self.__pending_subscriptions.remove(
             f"{event.scriptToken}")
